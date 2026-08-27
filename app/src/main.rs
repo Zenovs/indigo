@@ -737,7 +737,17 @@ fn main() {
     }
 
     // --- position & lebenszyklus -----------------------------------------
-    if let (Some(x), Some(y)) = (initial.x, initial.y) {
+    // gespeicherte position nur übernehmen, wenn sie auf einem monitor
+    // liegt — sonst bliebe das widget nach layout-änderungen unsichtbar
+    let restore_pos = match (initial.x, initial.y) {
+        (Some(x), Some(y)) if position_visible(x, y) => Some((x, y)),
+        (Some(_), Some(_)) => {
+            eprintln!("indigo: gespeicherte position liegt ausserhalb der monitore, verwerfe sie");
+            None
+        }
+        _ => None,
+    };
+    if let Some((x, y)) = restore_pos {
         window.move_(x, y);
     }
     {
@@ -762,7 +772,7 @@ fn main() {
 
     sync_size();
     window.show_all();
-    if let (Some(x), Some(y)) = (initial.x, initial.y) {
+    if let Some((x, y)) = restore_pos {
         window.move_(x, y); // mancher wm ignoriert move vor dem mapping
     }
 
@@ -796,6 +806,30 @@ fn restart_self(path: &std::path::Path) {
     use std::os::unix::process::CommandExt;
     let err = std::process::Command::new(path).exec();
     eprintln!("indigo-update: neustart fehlgeschlagen: {err}");
+}
+
+/// prüft, ob die kopfzeile des widgets an dieser position auf irgendeinem
+/// monitor sichtbar wäre (mindestens 40x20 px überlappung)
+fn position_visible(x: i32, y: i32) -> bool {
+    let Some(display) = gdk::Display::default() else {
+        return true; // ohne display-info lieber übernehmen
+    };
+    let head = (
+        x,
+        y + render::MARGIN as i32,
+        render::WINDOW_W,
+        40,
+    );
+    for i in 0..display.n_monitors() {
+        let Some(monitor) = display.monitor(i) else { continue };
+        let g = monitor.geometry();
+        let overlap_x = (head.0 + head.2).min(g.x() + g.width()) - head.0.max(g.x());
+        let overlap_y = (head.1 + head.3).min(g.y() + g.height()) - head.1.max(g.y());
+        if overlap_x >= 40 && overlap_y >= 20 {
+            return true;
+        }
+    }
+    false
 }
 
 /// exklusiver flock auf eine lock-datei; None wenn schon eine instanz läuft

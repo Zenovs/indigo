@@ -1,6 +1,6 @@
 [package]
 name = "indigo"
-version = "0.2.0"
+version = "0.2.1"
 description = "resource monitor widget (native gtk)"
 edition = "2021"
 license = "MIT"
