@@ -1,0 +1,253 @@
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  src: url("fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  src: url("fonts/jetbrains-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body {
+  background: transparent;
+}
+
+body {
+  font-family: 'JetBrains Mono', monospace;
+  padding: 32px;
+}
+
+.panel {
+  width: 280px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(16, 16, 38, 0.82);
+  /* kein backdrop-filter: webkitgtk kann den desktop hinter einem
+     transparenten fenster nicht weichzeichnen — es wuerde nur cpu kosten */
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.2);
+  color: #d9dae6;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: grab;
+}
+
+.head:active {
+  cursor: grabbing;
+}
+
+.head-title {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(217, 218, 230, 0.75);
+}
+
+.head-stats {
+  display: none;
+  gap: 14px;
+  align-items: baseline;
+  font-size: 12px;
+  color: #d9dae6;
+}
+
+.head-stats .prefix {
+  font-size: 10px;
+}
+
+.panel.collapsed .head {
+  height: 40px;
+  border-bottom: none;
+}
+
+.panel.collapsed .head-stats {
+  display: flex;
+}
+
+.panel.collapsed .body {
+  display: none;
+}
+
+.head-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(217, 218, 230, 0.28);
+  cursor: pointer;
+}
+
+.head-dot:hover {
+  background: rgba(217, 218, 230, 0.6);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 12px;
+}
+
+.row-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.label {
+  font-size: 10px;
+  color: rgba(217, 218, 230, 0.45);
+  letter-spacing: 0.04em;
+}
+
+.value {
+  font-size: 12px;
+  color: #d9dae6;
+}
+
+.value-pair {
+  display: flex;
+  gap: 12px;
+}
+
+.prefix {
+  color: rgba(217, 218, 230, 0.45);
+}
+
+.bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
+  background: oklch(0.6 0.18 278);
+  /* der weiche breiten-übergang läuft in js mit wenigen schritten —
+     eine css-transition würde 0.8s lang mit 60fps repainten */
+  transition: background 0.8s ease;
+}
+
+.row-ip {
+  padding-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.fans {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.fans[hidden] {
+  display: none;
+}
+
+.fan-mode {
+  color: rgba(217, 218, 230, 0.45);
+  cursor: pointer;
+}
+
+.fan-mode:hover {
+  color: rgba(217, 218, 230, 0.75);
+}
+
+.fan-mode.manual {
+  color: #d9dae6;
+}
+
+/* unsichtbar vergrösserte Trefferfläche um den 3-px-Regler */
+.slider-hit {
+  padding: 5px 0;
+  margin: -5px 0;
+  cursor: pointer;
+}
+
+.slider-hit .bar-fill.dim {
+  opacity: 0.45;
+}
+
+.expandable {
+  cursor: pointer;
+}
+
+.expandable:hover .label {
+  color: rgba(217, 218, 230, 0.75);
+}
+
+.top-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+}
+
+.top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.top-name {
+  font-size: 10px;
+  color: rgba(217, 218, 230, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 170px;
+}
+
+.top-val {
+  font-size: 11px;
+  color: #d9dae6;
+}
+
+.top-empty {
+  font-size: 10px;
+  color: rgba(217, 218, 230, 0.45);
+}
+
+.top-count {
+  font-size: 10px;
+  color: rgba(217, 218, 230, 0.45);
+}
+
+.value-ip {
+  font-size: 11px;
+  color: rgba(217, 218, 230, 0.65);
+}

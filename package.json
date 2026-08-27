@@ -1,0 +1,13 @@
+{
+  "name": "indigo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:ui": "tsc -p ui",
+    "watch:ui": "tsc -p ui --watch"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "typescript": "^5.6.0"
+  }
+}

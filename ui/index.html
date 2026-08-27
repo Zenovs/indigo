@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>indigo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="panel" id="panel">
+    <header class="head" data-tauri-drag-region>
+      <span class="head-title" data-tauri-drag-region>indigo</span>
+      <span class="head-stats" data-tauri-drag-region>
+        <span><span class="prefix">cpu </span><span id="c-cpu">–</span></span>
+        <span><span class="prefix">ram </span><span id="c-ram">–</span></span>
+      </span>
+      <span class="head-dot" id="toggle"></span>
+    </header>
+    <div class="body" id="body">
+      <div class="row row-bar" id="row-cpu">
+        <div class="row-line expandable" data-kind="cpu">
+          <span class="label">cpu</span>
+          <span class="value" id="cpu-val">–</span>
+        </div>
+        <div class="bar"><div class="bar-fill" id="cpu-bar"></div></div>
+      </div>
+      <div class="row row-bar" id="row-ram">
+        <div class="row-line expandable" data-kind="ram">
+          <span class="label">ram</span>
+          <span class="value value-pair">
+            <span class="prefix" id="ram-abs"></span>
+            <span id="ram-val">–</span>
+          </span>
+        </div>
+        <div class="bar"><div class="bar-fill" id="ram-bar"></div></div>
+      </div>
+      <div class="row row-bar">
+        <div class="row-line">
+          <span class="label">disk</span>
+          <span class="value" id="disk-val">–</span>
+        </div>
+        <div class="bar"><div class="bar-fill" id="disk-bar"></div></div>
+      </div>
+      <div class="row row-bar" id="row-gpu">
+        <div class="row-line expandable" data-kind="gpu">
+          <span class="label">gpu</span>
+          <span class="value" id="gpu-val">–</span>
+        </div>
+        <div class="bar"><div class="bar-fill" id="gpu-bar"></div></div>
+      </div>
+      <div class="row-line">
+        <span class="label">temp</span>
+        <span class="value value-pair">
+          <span><span class="prefix">cpu </span><span id="temp-cpu">–</span></span>
+          <span><span class="prefix">gpu </span><span id="temp-gpu">–</span></span>
+        </span>
+      </div>
+      <div class="row-line">
+        <span class="label">net</span>
+        <span class="value value-pair">
+          <span><span class="prefix">↑ </span><span id="net-up">–</span></span>
+          <span><span class="prefix">↓ </span><span id="net-down">–</span></span>
+        </span>
+      </div>
+      <div class="row-line">
+        <span class="label">pwr</span>
+        <span class="value" id="pwr-val">–</span>
+      </div>
+      <div class="fans" id="fans" hidden></div>
+      <div class="row-line row-ip">
+        <span class="label">ip</span>
+        <span class="value-ip" id="ip-val">–</span>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
