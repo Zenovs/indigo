@@ -1,11 +1,13 @@
 # indigo
 
-Ein ruhiges Desktop-Widget für Linux, das Systemwerte anzeigt: CPU, RAM,
-Disk, GPU, Temperaturen, Netz-Durchsatz, Leistungsaufnahme, IP — und die
-Lüfter des Systems anzeigen und steuern kann. Liegt frei auf dem Bildschirm,
-immer im Vordergrund, verschiebbar per Ziehen an der Kopfzeile.
+Ein ruhiges Desktop-Widget für Linux, nativ in GTK 3 gezeichnet (Rust +
+Cairo, kein Browser). Zeigt Systemwerte: CPU, RAM, Disk, GPU, Temperaturen,
+Netz-Durchsatz, Leistungsaufnahme, IP — und kann die Lüfter des Systems
+anzeigen und steuern, einzeln oder als Gruppe. Liegt frei auf dem
+Bildschirm, immer im Vordergrund, verschiebbar per Ziehen an der Kopfzeile.
 
-Kein Netzwerkzugriff, keine Telemetrie, kein Account. Liest lokal, schreibt
+Die einzige Netzwerkverbindung ist die abschaltbare Update-Prüfung gegen
+GitHub (siehe unten). Keine Telemetrie, kein Account. Liest lokal, schreibt
 lokal.
 
 ## Bedienung
@@ -22,31 +24,42 @@ lokal.
   rechts schaltet zwischen Firmware-Automatik und manuell um. Die Zeile `fans`
   steuert alle Lüfter gemeinsam
 - **Rechtsklick**: Aktualisierungsintervall (1 s / 2 s / 5 s), Autostart,
-  Beenden
+  Auto-Update, Beenden
 - **Tray-Icon**: Ein-/Ausblenden und Beenden
 
-## Voraussetzungen
+## Auto-Update
 
-- Linux mit GTK 3 / WebKitGTK 4.1 (Ubuntu 22.04+, `libwebkit2gtk-4.1-0`,
-  `libgtk-3-0`, `libayatana-appindicator3-1`)
-- Für GPU-Werte: NVIDIA-Treiber mit NVML (bei installiertem proprietärem
-  Treiber vorhanden). Ohne NVIDIA-Karte zeigen die GPU-Zeilen `n/a`
-- Unter Wayland läuft das Widget automatisch über XWayland, weil GNOME
-  always-on-top für native Wayland-Fenster nicht unterstützt
+Beim Start prüft indigo die GitHub-Releases von `Zenovs/indigo`. Gibt es
+eine neuere Version, lädt es das Binary nach `~/.local`, verifiziert die
+Prüfsumme und ersetzt sich selbst. Abschaltbar per Rechtsklick-Menü
+(«auto-update»); ohne Netz passiert still nichts. Das ist die einzige
+Netzwerkverbindung des Tools — es werden keine Daten gesendet.
 
 ## Installation
 
-Aus dem Release-Bundle:
+Aus den GitHub-Releases, als Debian-Paket:
 
 ```sh
-sudo apt install ./indigo_0.1.0_amd64.deb
-# oder das AppImage direkt starten:
-chmod +x indigo_0.1.0_amd64.AppImage && ./indigo_0.1.0_amd64.AppImage
+sudo apt install ./indigo_*_amd64.deb
+```
+
+Oder das rohe Binary direkt:
+
+```sh
+install -Dm755 indigo-x86_64-linux ~/.local/bin/indigo
 ```
 
 Beim ersten Start richtet indigo den Autostart ein (abschaltbar per
 Rechtsklick-Menü). Einstellungen liegen als JSON unter
 `~/.config/indigo/settings.json`.
+
+## Voraussetzungen
+
+- Linux mit GTK 3 (`libgtk-3-0`, auf den meisten Desktops vorhanden)
+- Für GPU-Werte: NVIDIA-Treiber mit NVML (bei installiertem proprietärem
+  Treiber vorhanden). Ohne NVIDIA-Karte zeigen die GPU-Zeilen `n/a`
+- Unter Wayland läuft das Widget automatisch über XWayland, weil GNOME
+  always-on-top für native Wayland-Fenster nicht unterstützt
 
 ## Mainboard-Lüfter freischalten
 
@@ -83,34 +96,33 @@ Ohne Freigabe zeigt `pwr` nur die GPU-Leistung.
 
 ## Selbst bauen
 
-Voraussetzungen: Rust (stable), Node (nur für `tsc`), sowie
-`libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
-libssl-dev build-essential`.
+Voraussetzungen: Rust (stable) und `libgtk-3-dev`. Kein Node, kein Bundler.
 
 ```sh
-npm install
-npm run build:ui
-cd src-tauri && cargo build --release
-# bundles (deb + appimage):
-npx tauri build
+cd app && cargo build --release
 ```
 
 ## Ressourcenverbrauch
 
-Das Widget rendert nur, was sich sichtbar ändert: Ticks ohne Änderung der
-gerundeten Anzeigewerte werden gar nicht erst ans Frontend geschickt. Im
-echten Leerlauf (stabile Werte) liegt der Verbrauch unter 1 % eines Kerns,
-kollabiert darunter; ändern sich Werte laufend (System unter Last), kostet
-das Nachzeichnen je nach Intervall 2–3 % eines Kerns — der Grossteil davon
-ist der WebKitGTK-Renderpfad, nicht die Messung selbst (Sampling: ~4 ms pro
-Tick). Grösseres Intervall (Rechtsklick → 2 s / 5 s) senkt den Verbrauch
-proportional.
+Ein einzelner Prozess, natives Cairo-Rendering — kein WebView, kein zweiter
+Prozess. Gezeichnet wird nur, was sich sichtbar ändert: Ticks, bei denen
+sich keine gerundete Anzeige bewegt, werden übersprungen. Ein grösseres
+Intervall (Rechtsklick → 2 s / 5 s) senkt den Verbrauch entsprechend.
 
 ## Architektur
 
-- `src-tauri/` — Rust-Backend (Tauri v2). Liest alle Werte in einem
-  Sampler-Thread und pusht sie als ein einziges `stats`-Event ans Frontend.
-  Jede Quelle (sysinfo, NVML, hwmon, RAPL) ist einzeln gekapselt und fällt
-  einzeln aus (`n/a` statt erfundener Zahlen)
-- `ui/` — Frontend, Vanilla TypeScript ohne Framework und ohne Bundler,
-  JetBrains Mono lokal eingebettet
+- `app/src/monitor.rs` — Sampler. Jede Quelle (sysinfo, NVML, hwmon, RAPL)
+  ist einzeln gekapselt und fällt einzeln aus (`n/a` statt erfundener Zahlen)
+- `app/src/fans.rs` — hwmon-Lüfter lesen und steuern
+- `app/src/processes.rs` — Top-Listen; RAM ist Pss aus `smaps_rollup`,
+  Fallback VmRSS — nie `/proc/pid/task`
+- `app/src/ui/` — Fenster und Zeichnen, direkt mit Cairo/Pango
+- `app/src/updater.rs` — Update-Prüfung gegen GitHub-Releases
+- `app/src/tray.rs` — Tray-Icon über ksni
+
+v0.1 war ein Tauri-Frontend (WebKitGTK); es liegt in der Git-Historie.
+
+## Schriftlizenz
+
+JetBrains Mono ist eingebettet, lizenziert unter der SIL Open Font License
+(`app/assets/fonts/OFL.txt`).

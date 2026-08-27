@@ -1,0 +1,43 @@
+[package]
+name = "indigo"
+version = "0.2.0"
+description = "resource monitor widget (native gtk)"
+edition = "2021"
+license = "MIT"
+authors = ["Zenovs"]
+
+[dependencies]
+gtk = "0.18"
+glib = "0.18"
+gdk = "0.18"
+cairo-rs = { version = "0.18", features = ["png"] }
+pango = "0.18"
+pangocairo = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.37"
+nvml-wrapper = "0.11"
+ksni = "0.2"
+png = "0.17"
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+sha2 = "0.10"
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"
+panic = "abort"
+
+[package.metadata.deb]
+name = "indigo"
+depends = "libgtk-3-0, libcairo2, libpango-1.0-0"
+section = "utils"
+priority = "optional"
+extended-description = "Ruhiges always-on-top Desktop-Widget für Systemwerte: CPU, RAM, Disk, GPU, Temperaturen, Netz, Leistungsaufnahme und Lüftersteuerung."
+assets = [
+    ["target/release/indigo", "usr/bin/", "755"],
+    ["packaging/indigo.desktop", "usr/share/applications/", "644"],
+    ["assets/icon-128.png", "usr/share/icons/hicolor/128x128/apps/indigo.png", "644"],
+]

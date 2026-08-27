@@ -16,6 +16,8 @@ pub struct Settings {
     pub interval_ms: u64,
     /// None = noch nie entschieden -> beim ersten Start aktivieren
     pub autostart: Option<bool>,
+    /// beim Start die neueste GitHub-Release-Version holen
+    pub autoupdate: bool,
 }
 
 impl Default for Settings {
@@ -26,6 +28,7 @@ impl Default for Settings {
             collapsed: false,
             interval_ms: 1500,
             autostart: None,
+            autoupdate: true,
         }
     }
 }
@@ -87,11 +90,26 @@ impl SettingsStore {
     }
 
     fn write(&self, settings: &Settings) {
+        use std::io::Write;
         if let Some(dir) = self.path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        if let Ok(json) = serde_json::to_string_pretty(settings) {
-            let _ = fs::write(&self.path, json);
+        let Ok(json) = serde_json::to_string_pretty(settings) else {
+            return;
+        };
+        // atomar: erst tempdatei im selben verzeichnis, dann rename —
+        // ein absturz mitten im schreiben hinterlässt so nie ein kaputtes json
+        let tmp = self.path.with_extension("json.tmp");
+        let ok = fs::File::create(&tmp)
+            .and_then(|mut f| {
+                f.write_all(json.as_bytes())?;
+                f.sync_all()
+            })
+            .is_ok();
+        if ok {
+            let _ = fs::rename(&tmp, &self.path);
+        } else {
+            let _ = fs::remove_file(&tmp);
         }
     }
 }

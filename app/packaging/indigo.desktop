@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=indigo
+Comment=resource monitor widget
+Exec=indigo
+Icon=indigo
+Categories=Utility;
+StartupNotify=false
+Terminal=false

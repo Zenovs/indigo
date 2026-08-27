@@ -19,8 +19,23 @@ pub fn is_enabled() -> bool {
     desktop_file().exists()
 }
 
+/// Binary-Pfad aus der Exec-Zeile des bestehenden Eintrags.
+pub fn exec_path() -> Option<std::path::PathBuf> {
+    let content = fs::read_to_string(desktop_file()).ok()?;
+    content
+        .lines()
+        .find_map(|l| l.strip_prefix("Exec="))
+        .map(|p| PathBuf::from(p.trim()))
+}
+
 pub fn enable() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    enable_with_exec(&exe)
+}
+
+/// Autostart-Eintrag auf einen bestimmten Binary-Pfad zeigen lassen
+/// (der Updater nutzt das, wenn er nicht in-place ersetzen kann).
+pub fn enable_with_exec(exe: &std::path::Path) -> Result<(), String> {
     let path = desktop_file();
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
