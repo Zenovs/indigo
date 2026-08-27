@@ -3,3 +3,4 @@ ui/main.js
 src-tauri/target/
 src-tauri/gen/
 app/target/
+*.deb
