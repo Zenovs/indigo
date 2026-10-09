@@ -1,6 +1,6 @@
 [package]
 name = "indigo"
-version = "0.2.1"
+version = "0.3.0"
 description = "resource monitor widget (native gtk)"
 edition = "2021"
 license = "MIT"
@@ -32,10 +32,10 @@ panic = "abort"
 
 [package.metadata.deb]
 name = "indigo"
-depends = "libgtk-3-0, libcairo2, libpango-1.0-0"
+depends = "libc6 (>= 2.34), libgtk-3-0, libcairo2, libpango-1.0-0"
 section = "utils"
 priority = "optional"
-extended-description = "Ruhiges always-on-top Desktop-Widget für Systemwerte: CPU, RAM, Disk, GPU, Temperaturen, Netz, Leistungsaufnahme und Lüftersteuerung."
+extended-description = "Ruhiges Desktop-Widget für Systemwerte, wahlweise immer im Vordergrund: CPU, RAM, Disk, GPU, Temperaturen, Netz, Leistungsaufnahme und Lüftersteuerung."
 assets = [
     ["target/release/indigo", "usr/bin/", "755"],
     ["packaging/indigo.desktop", "usr/share/applications/", "644"],

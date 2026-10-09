@@ -8,6 +8,7 @@ mod fans;
 mod monitor;
 mod processes;
 mod settings;
+mod stacking;
 mod state;
 mod tray;
 mod ui {
@@ -105,7 +106,6 @@ fn main() {
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     window.set_title("indigo");
     window.set_decorated(false);
-    window.set_keep_above(true);
     window.set_skip_taskbar_hint(true);
     window.set_skip_pager_hint(true);
     window.set_accept_focus(false);
@@ -115,6 +115,20 @@ fn main() {
     if let Some(visual) = WidgetExt::screen(&window).and_then(|s| s.rgba_visual()) {
         window.set_visual(Some(&visual));
     }
+
+    // immer im vordergrund oder normales fenster (stacking.rs). wo das
+    // widget dafür override-redirect wird (labwc u. a.), verschiebt indigo
+    // es in beiden modi selbst — so kann es der wm auch nicht an einer
+    // kante einrasten oder maximieren
+    let stack_method = stacking::detect();
+    let manual_move = stack_method == stacking::Method::OverrideRedirect;
+    let last_size = Rc::new(Cell::new((0i32, 0i32)));
+    let set_on_top = {
+        let window = window.clone();
+        let last_size = last_size.clone();
+        move |on: bool| stacking::apply(&window, stack_method, on, last_size.get())
+    };
+    let move_drag: Rc<Cell<Option<MoveDrag>>> = Rc::new(Cell::new(None));
 
     let area = gtk::DrawingArea::new();
     area.add_events(
@@ -126,17 +140,41 @@ fn main() {
     window.add(&area);
 
     // fenstergrösse dem inhalt nachführen
-    let last_size = Rc::new(Cell::new((0i32, 0i32)));
     let sync_size = {
         let app = app.clone();
         let window = window.clone();
         let last_size = last_size.clone();
         move || {
-            let h = (render::panel_height(&app.borrow()) + 2.0 * render::MARGIN).ceil() as i32;
-            let size = (render::WINDOW_W, h);
+            let margin = render::MARGIN as i32;
+            let panel_h = render::panel_height(&app.borrow()).ceil() as i32;
+            let size = (render::WINDOW_W, panel_h + 2 * margin);
             if last_size.get() != size {
                 last_size.set(size);
                 window.resize(size.0, size.1);
+                // klicks nur auf dem panel annehmen — über den transparenten
+                // schattenrand sollen sie die fenster darunter erreichen
+                let panel = cairo::RectangleInt::new(margin, margin, render::PANEL_W as i32, panel_h);
+                window.input_shape_combine_region(Some(&cairo::Region::create_rectangle(&panel)));
+            }
+        }
+    };
+
+    // eigenes verschieben beenden: zielposition setzen und gleich sichern
+    // (configure-events sichern währenddessen nicht)
+    let finish_move = {
+        let window = window.clone();
+        let store = store.clone();
+        let move_drag = move_drag.clone();
+        move || {
+            if let Some(drag) = move_drag.take() {
+                let (x, y) = drag.target();
+                if (x, y) != drag.placed {
+                    window.move_(x, y);
+                }
+                store.update(|s| {
+                    s.x = Some(x);
+                    s.y = Some(y);
+                });
             }
         }
     };
@@ -255,8 +293,11 @@ fn main() {
                 let mut group_n = 0usize;
                 for fan in &stats.fans {
                     if let (Some(pct), Some(_)) = (fan.pct, fan.auto_mode) {
-                        group_sum += pct as f64;
-                        group_n += 1;
+                        // vom kernel geregelte lüfter gehören nicht zur gruppe
+                        if !fan.kernel_governed {
+                            group_sum += pct as f64;
+                            group_n += 1;
+                        }
                         if !st.fan_held(&fan.id) {
                             st.set_bar_target(BarId::Fan(fan.id.clone()), pct as f64);
                         }
@@ -323,7 +364,7 @@ fn main() {
                         .map(|s| {
                             s.fans
                                 .iter()
-                                .filter(|f| f.pct.is_some() && f.auto_mode.is_some())
+                                .filter(|f| f.pct.is_some() && f.auto_mode.is_some() && !f.kernel_governed)
                                 .map(|f| f.id.clone())
                                 .collect()
                         })
@@ -392,6 +433,7 @@ fn main() {
         let store = store.clone();
         let interval = interval.clone();
         let menu_slot = menu_slot.clone();
+        let set_on_top = set_on_top.clone();
         move |time: u32| {
             let menu = gtk::Menu::new();
             let current = interval.load(Ordering::Relaxed);
@@ -407,6 +449,22 @@ fn main() {
                 menu.append(&item);
             }
             menu.append(&gtk::SeparatorMenuItem::new());
+
+            let top_item = gtk::CheckMenuItem::with_label("immer im vordergrund");
+            top_item.set_active(store.get().always_on_top);
+            {
+                let store = store.clone();
+                let set_on_top = set_on_top.clone();
+                top_item.connect_activate(move |_| {
+                    let on = !store.get().always_on_top;
+                    store.update(|s| s.always_on_top = on);
+                    // nicht im signal-handler des menüs neu mappen, sondern
+                    // danach im idle
+                    let set_on_top = set_on_top.clone();
+                    glib::idle_add_local_once(move || set_on_top(on));
+                });
+            }
+            menu.append(&top_item);
 
             let auto_item = gtk::CheckMenuItem::with_label("autostart");
             auto_item.set_active(autostart::is_enabled());
@@ -464,9 +522,13 @@ fn main() {
         let apply_fan = apply_fan.clone();
         let show_menu = show_menu.clone();
         let refresh_running = refresh_running.clone();
+        let move_drag = move_drag.clone();
+        let finish_move = finish_move.clone();
+        let move_timer = Rc::new(Cell::new(false));
         area.connect_button_press_event(move |_, ev| {
             let (x, y) = ev.position();
             if ev.button() == 3 {
+                finish_move();
                 // laufenden slider-drag committen — das menü schluckt sonst
                 // das button-1-release und der drag bliebe hängen
                 let drag = app.borrow_mut().drag_fan.take();
@@ -548,7 +610,7 @@ fn main() {
                             (FanTarget::Group, Some(s)) => s
                                 .fans
                                 .iter()
-                                .filter(|f| f.pct.is_some())
+                                .filter(|f| f.pct.is_some() && !f.kernel_governed)
                                 .all(|f| f.auto_mode != Some(false)),
                             _ => true,
                         }
@@ -564,7 +626,7 @@ fn main() {
                                     .map(|s| {
                                         s.fans
                                             .iter()
-                                            .filter(|f| f.pct.is_some())
+                                            .filter(|f| f.pct.is_some() && !f.kernel_governed)
                                             .map(|f| (f.id.clone(), f.pct.unwrap_or(50.0) as f64))
                                             .collect()
                                     })
@@ -604,12 +666,53 @@ fn main() {
                         let ids: Vec<String> = st
                             .stats
                             .as_ref()
-                            .map(|s| s.fans.iter().map(|f| f.id.clone()).collect())
+                            .map(|s| {
+                                s.fans
+                                    .iter()
+                                    .filter(|f| !f.kernel_governed)
+                                    .map(|f| f.id.clone())
+                                    .collect()
+                            })
                             .unwrap_or_default();
                         st.hold_fan(&target, Instant::now() + Duration::from_secs(3600), &ids);
                         st.drag_fan = Some((target, pct));
                     }
                     area_c.queue_draw();
+                }
+                Some(Hit::Header) if manual_move => {
+                    let origin = window.position();
+                    move_drag.set(Some(MoveDrag {
+                        press: ev.root(),
+                        origin,
+                        pointer: ev.root(),
+                        moved: false,
+                        placed: origin,
+                    }));
+                    // höchstens einmal pro frame verschieben: xwayland rechnet
+                    // zeigerkoordinaten schon mit der neuen fensterposition,
+                    // der compositor noch mit der alten — jeder zwischenstand
+                    // einzeln liesse das widget springen
+                    if !move_timer.replace(true) {
+                        let window = window.clone();
+                        let move_drag = move_drag.clone();
+                        let move_timer = move_timer.clone();
+                        glib::timeout_add_local(Duration::from_millis(16), move || {
+                            let Some(mut drag) = move_drag.get() else {
+                                move_timer.set(false);
+                                return glib::ControlFlow::Break;
+                            };
+                            if drag.moved {
+                                let (x, y) = drag.target();
+                                if (x, y) != drag.placed {
+                                    window.move_(x, y);
+                                    drag.placed = (x, y);
+                                }
+                                drag.moved = false;
+                                move_drag.set(Some(drag));
+                            }
+                            glib::ControlFlow::Continue
+                        });
+                    }
                 }
                 Some(Hit::Header) => {
                     window.begin_move_drag(1, ev.root().0 as i32, ev.root().1 as i32, ev.time());
@@ -622,7 +725,19 @@ fn main() {
     {
         let app = app.clone();
         let area_c = area.clone();
+        let move_drag = move_drag.clone();
+        let finish_move = finish_move.clone();
         area.connect_motion_notify_event(move |widget, ev| {
+            if let Some(mut drag) = move_drag.get() {
+                if ev.state().contains(gdk::ModifierType::BUTTON1_MASK) {
+                    drag.pointer = ev.root();
+                    drag.moved = true;
+                    move_drag.set(Some(drag));
+                } else {
+                    finish_move(); // release verpasst
+                }
+                return glib::Propagation::Proceed;
+            }
             let (x, _y) = ev.position();
             let mut st = app.borrow_mut();
             if let Some((target, _)) = &st.drag_fan {
@@ -660,7 +775,9 @@ fn main() {
         let app = app.clone();
         let area_c = area.clone();
         let apply_fan = apply_fan.clone();
+        let finish_move = finish_move.clone();
         area.connect_button_release_event(move |_, _| {
+            finish_move();
             let drag = app.borrow_mut().drag_fan.take();
             if let Some((target, pct)) = drag {
                 apply_fan(&target, Some(pct));
@@ -737,27 +854,58 @@ fn main() {
     }
 
     // --- position & lebenszyklus -----------------------------------------
-    // gespeicherte position nur übernehmen, wenn sie auf einem monitor
-    // liegt — sonst bliebe das widget nach layout-änderungen unsichtbar
-    let restore_pos = match (initial.x, initial.y) {
-        (Some(x), Some(y)) if position_visible(x, y) => Some((x, y)),
-        (Some(_), Some(_)) => {
-            eprintln!("indigo: gespeicherte position liegt ausserhalb der monitore, verwerfe sie");
-            None
+    // override-redirect lässt sich nur vor dem mappen setzen, an einem
+    // schon realisierten fenster
+    window.realize();
+    set_on_top(initial.always_on_top);
+
+    let restore_pos = if manual_move {
+        // kein window-manager platziert das widget oder holt es zurück:
+        // gespeicherte position ins bild ziehen, sonst rechts oben starten
+        match (initial.x, initial.y) {
+            (Some(x), Some(y)) => Some(stacking::clamp_position(x, y)),
+            _ => stacking::default_position(),
         }
-        _ => None,
+    } else {
+        // gespeicherte position nur übernehmen, wenn sie auf einem monitor
+        // liegt — sonst bliebe das widget nach layout-änderungen unsichtbar
+        match (initial.x, initial.y) {
+            (Some(x), Some(y)) if position_visible(x, y) => Some((x, y)),
+            (Some(_), Some(_)) => {
+                eprintln!("indigo: gespeicherte position liegt ausserhalb der monitore, verwerfe sie");
+                None
+            }
+            _ => None,
+        }
     };
     if let Some((x, y)) = restore_pos {
         window.move_(x, y);
     }
+    if manual_move {
+        // monitor weg, auflösung oder skalierung geändert: wieder ins bild
+        if let Some(screen) = gdk::Screen::default() {
+            let window = window.clone();
+            screen.connect_monitors_changed(move |_| {
+                let (x, y) = window.position();
+                let (cx, cy) = stacking::clamp_position(x, y);
+                if (cx, cy) != (x, y) {
+                    window.move_(cx, cy);
+                }
+            });
+        }
+    }
     {
         let store = store.clone();
+        let move_drag = move_drag.clone();
         window.connect_configure_event(move |win, _| {
-            let (x, y) = win.position();
-            store.update_throttled(|s| {
-                s.x = Some(x);
-                s.y = Some(y);
-            });
+            // beim eigenen verschieben sichert erst das loslassen
+            if move_drag.get().is_none() {
+                let (x, y) = win.position();
+                store.update_throttled(|s| {
+                    s.x = Some(x);
+                    s.y = Some(y);
+                });
+            }
             false
         });
     }
@@ -830,6 +978,28 @@ fn position_visible(x: i32, y: i32) -> bool {
         }
     }
     false
+}
+
+/// eigenes verschieben, wo kein window-manager zieht: zeigerposition (root)
+/// beim drücken, fensterposition dazu, letzter zeigerstand (moved: seit dem
+/// letzten setzen bewegt) und die zuletzt gesetzte fensterposition
+#[derive(Clone, Copy)]
+struct MoveDrag {
+    press: (f64, f64),
+    origin: (i32, i32),
+    pointer: (f64, f64),
+    moved: bool,
+    placed: (i32, i32),
+}
+
+impl MoveDrag {
+    /// fensterposition zum letzten zeigerstand, kopfzeile im bild
+    fn target(&self) -> (i32, i32) {
+        stacking::clamp_position(
+            self.origin.0 + (self.pointer.0 - self.press.0).round() as i32,
+            self.origin.1 + (self.pointer.1 - self.press.1).round() as i32,
+        )
+    }
 }
 
 /// exklusiver flock auf eine lock-datei; None wenn schon eine instanz läuft

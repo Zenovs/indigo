@@ -18,6 +18,13 @@ pub struct Settings {
     pub autostart: Option<bool>,
     /// beim Start die neueste GitHub-Release-Version holen
     pub autoupdate: bool,
+    /// über allen Fenstern liegen; false = normales Fenster, das andere
+    /// Fenster verdecken dürfen
+    pub always_on_top: bool,
+    /// Felder neuerer Versionen unverändert mitschreiben, statt sie beim
+    /// nächsten Speichern zu verlieren
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -29,6 +36,8 @@ impl Default for Settings {
             interval_ms: 1500,
             autostart: None,
             autoupdate: true,
+            always_on_top: true,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -123,4 +132,35 @@ fn config_dir() -> PathBuf {
             home.join(".config")
         });
     base.join("indigo")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vordergrund_einstellung() {
+        // settings.json von v0.2 kennt das feld nicht: weiter immer oben
+        let alt: Settings = serde_json::from_str(r#"{"x":10,"y":20,"autoupdate":false}"#).unwrap();
+        assert!(alt.always_on_top);
+        assert_eq!((alt.x, alt.y, alt.autoupdate), (Some(10), Some(20), false));
+
+        let aus: Settings = serde_json::from_str(r#"{"alwaysOnTop":false}"#).unwrap();
+        assert!(!aus.always_on_top);
+        let json = serde_json::to_string(&aus).unwrap();
+        assert!(json.contains(r#""alwaysOnTop":false"#), "{json}");
+    }
+
+    #[test]
+    fn fremde_felder_bleiben_erhalten() {
+        // ein späteres indigo hat neue felder geschrieben
+        let neu = r#"{"x":5,"alwaysOnTop":false,"zukunft":{"a":[1,2]},"modus":"x"}"#;
+        let s: Settings = serde_json::from_str(neu).unwrap();
+        assert_eq!((s.x, s.always_on_top), (Some(5), false));
+        let wieder: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert_eq!(wieder["zukunft"], serde_json::json!({"a": [1, 2]}));
+        assert_eq!(wieder["modus"], "x");
+        // bekannte felder landen nicht doppelt im rest
+        assert!(!s.extra.contains_key("alwaysOnTop") && !s.extra.contains_key("x"));
+    }
 }

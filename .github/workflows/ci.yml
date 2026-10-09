@@ -1,4 +1,5 @@
-# build und tests bei jedem push auf main und bei pull requests.
+# build und tests bei jedem push auf main und bei pull requests, auf x86_64
+# und aarch64 (raspberry pi u. a.).
 name: ci
 
 on:
@@ -8,7 +9,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 

@@ -1,14 +1,15 @@
 //! Auto-Update beim Start: ein Hintergrund-Thread wartet kurz, fragt dann das
 //! neueste GitHub-Release (Zenovs/indigo) ab und vergleicht dessen Version mit
-//! der eigenen. Ist das Release strikt neuer, werden Binärdatei und SHA256SUMS
-//! heruntergeladen, die Prüfsumme verifiziert und installiert: in-place per
-//! atomarem rename, wenn das Verzeichnis des laufenden Binaries beschreibbar
-//! ist, sonst nach $XDG_DATA_HOME/indigo/bin/indigo (der Autostart-Eintrag
-//! wird dann dorthin umgebogen). Das Ergebnis geht als UpdateEvent über einen
-//! glib-Kanal an den Hauptthread. Der Check ist über die Einstellung
-//! `autoupdate` abschaltbar — das prüft der Aufrufer vor spawn_check, nicht
-//! dieses Modul. Jeder Fehler (auch offline) wird nur nach stderr geloggt und
-//! bricht den Check still ab.
+//! der eigenen. Ist das Release strikt neuer, werden die Binärdatei der
+//! eigenen Architektur (indigo-x86_64-linux, indigo-aarch64-linux) und
+//! SHA256SUMS heruntergeladen, die Prüfsumme verifiziert und installiert:
+//! in-place per atomarem rename, wenn das Verzeichnis des laufenden Binaries
+//! beschreibbar ist, sonst nach $XDG_DATA_HOME/indigo/bin/indigo (der
+//! Autostart-Eintrag wird dann dorthin umgebogen). Das Ergebnis geht als
+//! UpdateEvent über einen glib-Kanal an den Hauptthread. Der Check ist über
+//! die Einstellung `autoupdate` abschaltbar — das prüft der Aufrufer vor
+//! spawn_check, nicht dieses Modul. Jeder Fehler (auch offline) wird nur nach
+//! stderr geloggt und bricht den Check still ab.
 
 use crate::autostart;
 use sha2::{Digest, Sha256};
@@ -29,8 +30,13 @@ pub enum UpdateEvent {
 }
 
 const RELEASE_URL: &str = "https://api.github.com/repos/Zenovs/indigo/releases/latest";
-const BINARY_ASSET: &str = "indigo-x86_64-linux";
 const SUMS_ASSET: &str = "SHA256SUMS";
+
+/// Release-Asset dieser Architektur — die Namen vergibt der Release-Workflow
+/// genauso ("indigo-x86_64-linux", "indigo-aarch64-linux").
+fn binary_asset() -> String {
+    format!("indigo-{}-linux", std::env::consts::ARCH)
+}
 
 /// Startet den Update-Check in einem eigenen Thread und kehrt sofort zurück.
 pub fn spawn_check(notify: glib::Sender<UpdateEvent>) {
@@ -83,8 +89,9 @@ fn check_and_install() -> Result<Option<UpdateEvent>, String> {
     }
 
     let assets = release["assets"].as_array().ok_or("release ohne assets")?;
-    let binary_url = asset_url(assets, BINARY_ASSET)
-        .ok_or_else(|| format!("asset {BINARY_ASSET} fehlt im release"))?;
+    let binary_asset = binary_asset();
+    let binary_url = asset_url(assets, &binary_asset)
+        .ok_or_else(|| format!("asset {binary_asset} fehlt im release"))?;
     let sums_url = asset_url(assets, SUMS_ASSET)
         .ok_or_else(|| format!("asset {SUMS_ASSET} fehlt im release"))?;
 
@@ -98,8 +105,8 @@ fn check_and_install() -> Result<Option<UpdateEvent>, String> {
 
     let sums = fs::read_to_string(&sums_file)
         .map_err(|e| format!("{SUMS_ASSET} unlesbar: {e}"))?;
-    let expected = find_sum(&sums, BINARY_ASSET)
-        .ok_or_else(|| format!("keine prüfsumme für {BINARY_ASSET} in {SUMS_ASSET}"))?;
+    let expected = find_sum(&sums, &binary_asset)
+        .ok_or_else(|| format!("keine prüfsumme für {binary_asset} in {SUMS_ASSET}"))?;
     let actual = sha256_hex(&download)?;
     if actual != expected {
         let _ = fs::remove_file(&download);
@@ -289,13 +296,33 @@ mod tests {
     }
 
     #[test]
+    fn asset_name_je_architektur() {
+        // x86_64 muss beim alten namen bleiben: v0.2.x sucht genau diesen
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(binary_asset(), "indigo-x86_64-linux");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(binary_asset(), "indigo-aarch64-linux");
+        assert!(binary_asset().starts_with("indigo-") && binary_asset().ends_with("-linux"));
+    }
+
+    #[test]
     fn sha256sums_zeilen() {
+        // SHA256SUMS eines releases mit beiden architekturen und deb-paketen
         let sums = "0123abcd  indigo-x86_64-linux\n\
+                    feedface  indigo-aarch64-linux\n\
+                    00ff00ff  indigo_0.3.0-1_amd64.deb\n\
+                    11ee11ee  indigo_0.3.0-1_arm64.deb\n\
                     deadbeef  anderes-asset\n";
         assert_eq!(
             find_sum(sums, "indigo-x86_64-linux").as_deref(),
             Some("0123abcd")
         );
+        assert_eq!(
+            find_sum(sums, "indigo-aarch64-linux").as_deref(),
+            Some("feedface")
+        );
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        assert!(find_sum(sums, &binary_asset()).is_some());
         assert_eq!(find_sum(sums, "anderes-asset").as_deref(), Some("deadbeef"));
         assert_eq!(find_sum(sums, "fehlt"), None);
 

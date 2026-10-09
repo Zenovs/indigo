@@ -1,7 +1,8 @@
-# baut bei jedem tag "v*" das release-binary und das deb-paket und
-# veröffentlicht beides als github-release. der auto-updater im widget
-# erwartet die assets exakt unter den namen "indigo-x86_64-linux" und
-# "SHA256SUMS" — nicht umbenennen.
+# baut bei jedem tag "v*" die release-binaries und deb-pakete für x86_64 und
+# aarch64 (raspberry pi u. a.) und veröffentlicht alles als github-release.
+# der auto-updater im widget erwartet die assets exakt unter den namen
+# "indigo-<arch>-linux" (arch wie rusts std::env::consts::ARCH: x86_64,
+# aarch64) und "SHA256SUMS" — nicht umbenennen.
 name: release
 
 on:
@@ -13,8 +14,33 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-22.04 # ältere glibc für kompatibilität
+  # schutz gegen endlos-update-schleifen: das release-tag muss zur
+  # crate-version passen, sonst meldet sich das gebaute binary mit einer
+  # anderen version als das tag und der updater dreht durch
+  version:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: tag == crate-version
+        working-directory: app
+        run: |
+          crate="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          tag="${GITHUB_REF_NAME#v}"
+          test "$crate" = "$tag" || { echo "tag v$tag passt nicht zu Cargo.toml-version $crate" >&2; exit 1; }
+
+  build:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04 # ältere glibc für kompatibilität
+          - arch: aarch64
+            runner: ubuntu-22.04-arm # nativ statt cross: gtk braucht die arm64-dev-pakete
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,16 +55,6 @@ jobs:
         with:
           workspaces: app
 
-      # schutz gegen endlos-update-schleifen: das release-tag muss zur
-      # crate-version passen, sonst meldet sich das gebaute binary mit einer
-      # anderen version als das tag und der updater dreht durch
-      - name: tag == crate-version
-        working-directory: app
-        run: |
-          crate="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          tag="${GITHUB_REF_NAME#v}"
-          test "$crate" = "$tag" || { echo "tag v$tag passt nicht zu Cargo.toml-version $crate" >&2; exit 1; }
-
       - name: build
         working-directory: app
         run: cargo build --release
@@ -50,14 +66,34 @@ jobs:
 
       - name: artefakte vorbereiten
         run: |
-          cp app/target/release/indigo indigo-x86_64-linux
-          cp app/target/debian/indigo_*_amd64.deb .
-          sha256sum indigo-x86_64-linux *.deb > SHA256SUMS
+          mkdir dist
+          cp app/target/release/indigo dist/indigo-${{ matrix.arch }}-linux
+          cp app/target/debian/indigo_*.deb dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: indigo-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
+  # eine SHA256SUMS über alle architekturen, dann erst veröffentlichen
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: prüfsummen
+        working-directory: dist
+        run: sha256sum indigo-*-linux *.deb > SHA256SUMS
 
       - name: release erstellen
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            indigo-x86_64-linux
-            *.deb
-            SHA256SUMS
+            dist/indigo-*-linux
+            dist/*.deb
+            dist/SHA256SUMS

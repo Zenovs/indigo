@@ -10,6 +10,16 @@ if [ "$(id -u)" != 0 ]; then
     exit 1
 fi
 
+# nct6775 tastet super-i/o-ports ab, die es nur auf x86 gibt — auf arm
+# (raspberry pi) liefe modprobe ins leere bis zum kernel-oops
+case "$(uname -m)" in
+    x86_64 | i?86) ;;
+    *)
+        echo "nur für x86-mainboards (super-i/o-chip); auf $(uname -m) nicht nötig" >&2
+        exit 1
+        ;;
+esac
+
 TARGET_USER="${SUDO_USER:-$(logname)}"
 TARGET_GROUP="$(id -gn "$TARGET_USER")"
 

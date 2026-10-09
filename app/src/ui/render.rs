@@ -13,7 +13,8 @@ pub const WINDOW_W: i32 = (PANEL_W + 2.0 * MARGIN) as i32;
 
 const PAD_X: f64 = 12.0;
 const GAP: f64 = 11.0;
-const HEADER_H: f64 = 28.0;
+/// kopfzeile, zugleich die ziehfläche (kollabiert höher)
+pub const HEADER_H: f64 = 28.0;
 const HEADER_H_COLLAPSED: f64 = 40.0;
 const LINE_H: f64 = 15.0;
 const BASELINE: f64 = 11.5; // baseline innerhalb einer 15px-zeile
@@ -474,7 +475,7 @@ fn draw_content(p: &mut Painter, app: &App, px: f64, py: f64) -> f64 {
         }
 
         let controllable: Vec<&crate::fans::FanStat> =
-            s.fans.iter().filter(|f| f.pct.is_some()).collect();
+            s.fans.iter().filter(|f| f.pct.is_some() && !f.kernel_governed).collect();
 
         // gruppen-regler bei mehr als einem steuerbaren kanal
         if controllable.len() > 1 {
@@ -496,7 +497,7 @@ fn draw_content(p: &mut Painter, app: &App, px: f64, py: f64) -> f64 {
                 *app.bar_shown.get(&BarId::FanGroup).unwrap_or(&avg)
             };
             y = draw_fan_row(p, app, x0, w, right, y, "fans", &mode_text, manual, None, shown,
-                autos > 0 && app.drag_fan.is_none(), FanTarget::Group);
+                autos > 0 && app.drag_fan.is_none(), FanTarget::Group, true);
             y += GAP;
         }
 
@@ -520,8 +521,9 @@ fn draw_content(p: &mut Painter, app: &App, px: f64, py: f64) -> f64 {
                     *app.bar_shown.get(&BarId::Fan(fan.id.clone())).unwrap_or(&0.0)
                 };
                 let dim = fan.auto_mode != Some(false) && !dragging;
+                // vom kernel geregelt: nur anzeigen, keine klickflächen
                 y = draw_fan_row(p, app, x0, w, right, y, &fan.label, &mode_text, manual,
-                    rpm_text.as_deref(), shown, dim, target);
+                    rpm_text.as_deref(), shown, dim, target, !fan.kernel_governed);
             } else {
                 // nur drehzahl, keine steuerung
                 let base = y + BASELINE;
@@ -574,6 +576,7 @@ fn draw_fan_row(
     shown_pct: f64,
     dim: bool,
     target: FanTarget,
+    interactive: bool,
 ) -> f64 {
     let base = y + BASELINE;
     p.text(x0, base, label, S_LABEL, None);
@@ -602,7 +605,7 @@ fn draw_fan_row(
         S_VALUE_DIM
     };
     let mode_left = p.text_right(left, base, mode_text, style);
-    if !mode_text.is_empty() {
+    if interactive && !mode_text.is_empty() {
         p.hit(
             Hit::FanMode(target.clone()),
             Rect::new(mode_left - 4.0, y - 2.0, left - mode_left + 8.0, LINE_H + 4.0),
@@ -621,7 +624,9 @@ fn draw_fan_row(
         );
     }
     // grosszügige trefferfläche um den 3px-balken
-    p.hit(Hit::FanSlider(target), Rect::new(x0, bar_y - 5.0, w, BAR_H + 10.0));
+    if interactive {
+        p.hit(Hit::FanSlider(target), Rect::new(x0, bar_y - 5.0, w, BAR_H + 10.0));
+    }
 
     y + LINE_H + BAR_GAP + BAR_H
 }
@@ -705,13 +710,38 @@ mod tests {
             ip: Some("192.168.1.42".into()),
             gpu_fan: Some(35.0),
             fans: vec![
-                FanStat { id: "nct:1".into(), label: "fan1".into(), rpm: Some(1240), pct: Some(45.0), auto_mode: Some(true) },
-                FanStat { id: "nct:2".into(), label: "fan2".into(), rpm: Some(880), pct: Some(92.0), auto_mode: Some(false) },
+                FanStat { id: "nct:1".into(), label: "fan1".into(), rpm: Some(1240), pct: Some(45.0), auto_mode: Some(true), kernel_governed: false },
+                FanStat { id: "nct:2".into(), label: "fan2".into(), rpm: Some(880), pct: Some(92.0), auto_mode: Some(false), kernel_governed: false },
             ],
         }
     }
 
-    fn render_to_png(app: &App, path: &str) {
+    /// raspberry pi: keine nvidia-gpu, kein rapl, lüfter regelt der kernel
+    fn pi_stats() -> Stats {
+        Stats {
+            cpu: Some(12.0),
+            ram: Some(64.0),
+            ram_used: Some((5.0 * 1024.0 * 1024.0 * 1024.0) as u64),
+            ram_total: Some((7.7 * 1024.0 * 1024.0 * 1024.0) as u64),
+            disk: Some(6.0),
+            temp_cpu: Some(52.0),
+            net_up: Some(0.1),
+            net_down: Some(0.3),
+            ip: Some("10.0.0.71".into()),
+            fans: vec![FanStat {
+                id: "pwmfan:1".into(),
+                label: "fan1".into(),
+                rpm: Some(0),
+                pct: Some(29.0),
+                auto_mode: Some(true),
+                kernel_governed: true,
+            }],
+            ..Stats::default()
+        }
+    }
+
+    /// zeichnet in ein png und liefert die hit-regionen des passes
+    fn render_to_png(app: &App, path: &str) -> Vec<(Hit, Rect)> {
         let h = (panel_height(app) + 2.0 * MARGIN).ceil() as i32;
         let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, WINDOW_W, h).unwrap();
         let cr = Context::new(&surface).unwrap();
@@ -721,11 +751,12 @@ mod tests {
         let fontmap = pangocairo::FontMap::default();
         let pctx = fontmap.create_context();
         let mut cache = BgCache::default();
-        let _ = draw(&cr, pctx, app, &mut cache);
+        let (hits, _) = draw(&cr, pctx, app, &mut cache);
         drop(cr);
         let mut file = std::fs::File::create(path).unwrap();
         surface.write_to_png(&mut file).unwrap();
         println!("preview: {path}");
+        hits
     }
 
     /// rendert beide zustände als png zur sichtprüfung des designs
@@ -761,5 +792,47 @@ mod tests {
 
         app.collapsed = true;
         render_to_png(&app, dir.join("kollabiert.png").to_str().unwrap());
+    }
+
+    /// vom kernel geregelter lüfter: zeile mit "auto" und balken, aber ohne
+    /// mode-umschalter und slider — und kein gruppen-regler
+    #[test]
+    fn kernel_luefter_nur_anzeige() {
+        crate::ensure_fonts();
+        let dir = std::env::temp_dir().join("indigo-preview");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let mut app = App::new(false);
+        app.stats = Some(pi_stats());
+        for (id, v) in [(BarId::Cpu, 12.0), (BarId::Ram, 64.0), (BarId::Disk, 6.0)] {
+            app.set_bar_immediate(id, v);
+        }
+        app.set_bar_immediate(BarId::Fan("pwmfan:1".into()), 29.0);
+        let hits = render_to_png(&app, dir.join("pi.png").to_str().unwrap());
+        assert!(
+            !hits.iter().any(|(h, _)| matches!(h, Hit::FanMode(_) | Hit::FanSlider(_))),
+            "geregelter lüfter darf nicht klickbar sein"
+        );
+
+        // daneben ein steuerbarer kanal: der bleibt klickbar, eine gruppe
+        // entsteht trotzdem nicht (nur ein steuerbarer)
+        let mut stats = pi_stats();
+        stats.fans.push(FanStat {
+            id: "nct:1".into(),
+            label: "fan2".into(),
+            rpm: Some(900),
+            pct: Some(40.0),
+            auto_mode: Some(true),
+            kernel_governed: false,
+        });
+        app.stats = Some(stats);
+        let hits = render_to_png(&app, dir.join("pi-gemischt.png").to_str().unwrap());
+        let one = FanTarget::One("nct:1".into());
+        assert!(hits.iter().any(|(h, _)| *h == Hit::FanSlider(one.clone())));
+        assert!(hits.iter().any(|(h, _)| *h == Hit::FanMode(one.clone())));
+        assert!(!hits.iter().any(|(h, _)| matches!(h, Hit::FanSlider(FanTarget::Group))));
+        assert!(!hits
+            .iter()
+            .any(|(h, _)| matches!(h, Hit::FanSlider(FanTarget::One(id)) if id == "pwmfan:1")));
     }
 }
